@@ -8,24 +8,50 @@ const prisma = new PrismaClient();
 
 async function main() {
     try {
-        await prisma.$transaction(async (tx) => {
-            const allCareers = await tx.career.findMany();
-            const allQuestions = await tx.question.findMany();
+        await prisma.answer.deleteMany();
+        await prisma.userCareer.deleteMany();
+        await prisma.user.deleteMany();
+        await prisma.question.deleteMany();
+        await prisma.career.deleteMany();
 
-            for (const user of users) {
-                const newUser = await tx.user.create({
-                    data: {
+        // Create careers and questions
+        await prisma.career.createMany({ data: careers });
+        await prisma.question.createMany({ data: questions });
+
+        const allCareers = await prisma.career.findMany();
+        const allQuestions = await prisma.question.findMany();
+
+        for (const user of users) {
+            await prisma.$transaction(async (tx) => {
+                // Use upsert to handle both new and existing users
+                const newUser = await tx.user.upsert({
+                    where: { email: user.email },
+                    update: {
+                        name: user.name,
+                        password: user.password,
+                    },
+                    create: {
                         name: user.name,
                         email: user.email,
                         password: user.password,
                     },
                 });
 
+                // Rest of your code remains the same...
                 for (let i = 0; i < user.answers.create.length; i++) {
                     const question = allQuestions[i];
                     if (question) {
-                        await tx.answer.create({
-                            data: {
+                        await tx.answer.upsert({
+                            where: {
+                                userId_questionId: {
+                                    userId: newUser.id,
+                                    questionId: question.id,
+                                },
+                            },
+                            update: {
+                                choice: user.answers.create[i].answer,
+                            },
+                            create: {
                                 userId: newUser.id,
                                 questionId: question.id,
                                 choice: user.answers.create[i].answer,
@@ -35,10 +61,19 @@ async function main() {
                 }
 
                 for (const scoreEntry of user.scores.create) {
-                    const career = allCareers.find(career => career.name === scoreEntry.career);
+                    const career = allCareers.find(c => c.name === scoreEntry.career);
                     if (career) {
-                        await tx.userCareer.create({
-                            data: {
+                        await tx.userCareer.upsert({
+                            where: {
+                                userId_careerId: {
+                                    userId: newUser.id,
+                                    careerId: career.id,
+                                },
+                            },
+                            update: {
+                                score: scoreEntry.score,
+                            },
+                            create: {
                                 userId: newUser.id,
                                 careerId: career.id,
                                 score: scoreEntry.score,
@@ -46,8 +81,8 @@ async function main() {
                         });
                     }
                 }
-            }
-        });
+            });
+        }
 
         console.log('Seeding completed successfully.');
 
